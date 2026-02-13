@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ball & Beam Mission Control</title>
+    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link href='https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css' rel='stylesheet'>
+    <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;600;700&display=swap" rel="stylesheet">
+
+    <style>
+        /* --- CSS Styling (ส่วนตกแต่ง) --- */
+        :root {
+            --bg-color: #0d0d12; /* สีพื้นหลังมืด */
+            --card-color: #1a1a24; /* สีการ์ด */
+            --neon-green: #00ff9d;
+            --neon-blue: #00f7ff;
+            --neon-red: #ff3860;
+            --neon-yellow: #ffdd57;
+            --text-color: #e0e6ed;
+        }
+        body {
+            font-family: 'Rajdhani', sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            margin: 0;
+            padding: 20px;
+            min-height: 100vh;
+        }
+        h1 {
+            text-align: center;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            margin-bottom: 10px;
+            text-shadow: 0 0 10px var(--neon-blue);
+        }
+        /* Status Bar Icon */
+        #status-icon { font-size: 1.2rem; margin-right: 5px; }
+        .status-connected { color: var(--neon-green); text-shadow: 0 0 8px var(--neon-green); }
+        .status-disconnected { color: var(--neon-red); text-shadow: 0 0 8px var(--neon-red); }
+        .status-bar { text-align: center; margin-bottom: 30px; font-weight: 600; font-size: 1.1rem; display: flex; justify-content: center; align-items: center;}
+
+        /* Grid Layouts */
+        .kpi-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 25px;
+        }
+        .chart-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(450px, 1fr));
+            gap: 25px;
+        }
+
+        /* Cards Styling */
+        .card {
+            background: var(--card-color);
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 8px 20px rgba(0,0,0,0.3);
+            border: 1px solid rgba(255,255,255,0.05);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+        .card:hover {
+            box-shadow: 0 8px 25px rgba(0, 247, 255, 0.15);
+            border-color: rgba(0, 247, 255, 0.3);
+        }
+
+        /* KPI Cards Specifics */
+        .kpi-card {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .kpi-info h3 { margin: 0; font-size: 0.9rem; opacity: 0.7; }
+        .kpi-value { font-size: 1.8rem; font-weight: 700; margin: 5px 0 0 0; }
+        .kpi-icon { font-size: 2.5rem; opacity: 0.8; }
+
+        /* Color Accents */
+        .accent-green { color: var(--neon-green); text-shadow: 0 0 5px var(--neon-green); }
+        .accent-blue { color: var(--neon-blue); text-shadow: 0 0 5px var(--neon-blue); }
+        .accent-yellow { color: var(--neon-yellow); text-shadow: 0 0 5px var(--neon-yellow); }
+        .accent-red { color: var(--neon-red); text-shadow: 0 0 5px var(--neon-red); }
+
+        /* Chart Styling */
+        .chart-header { display: flex; align-items: center; margin-bottom: 15px; color: var(--neon-blue); }
+        .chart-header i { font-size: 1.5rem; margin-right: 10px; }
+        canvas { max-height: 350px; }
+        
+        /* Responsive adjustments */
+        @media (max-width: 768px) {
+            .chart-grid { grid-template-columns: 1fr; }
+            h1 { font-size: 1.5rem; }
+        }
+    </style>
+</head>
+<body>
+
+    <h1>🚀 Ball & Beam System 🚀</h1>
+    <div class="status-bar">
+        <i id="status-icon" class='bx bxs-circle status-disconnected'></i>
+        <span id="status-text">สถานะ: กำลังรอการเชื่อมต่อ...</span>
+    </div>
+
+    <div class="kpi-grid">
+        <div class="card kpi-card" style="border-bottom: 3px solid var(--neon-green);">
+            <div class="kpi-info">
+                <h3>Target (Setpoint)</h3>
+                <p class="kpi-value accent-green"><span id="val-setpoint">--</span> cm</p>
+            </div>
+            <i class='bx bx-target-lock kpi-icon accent-green'></i>
+        </div>
+        <div class="card kpi-card" style="border-bottom: 3px solid var(--neon-red);">
+            <div class="kpi-info">
+                <h3>Actual Position</h3>
+                <p class="kpi-value accent-red"><span id="val-actual">--</span> cm</p>
+            </div>
+            <i class='bx bx-ball kpi-icon accent-red'></i>
+        </div>
+        <div class="card kpi-card" style="border-bottom: 3px solid var(--neon-blue);">
+            <div class="kpi-info">
+                <h3>Motor Current</h3>
+                <p class="kpi-value accent-blue"><span id="val-current">--</span> mA</p>
+            </div>
+            <i class='bx bxs-zap kpi-icon accent-blue'></i>
+        </div>
+        <div class="card kpi-card" style="border-bottom: 3px solid var(--neon-yellow);">
+            <div class="kpi-info">
+                <h3>System Voltage</h3>
+                <p class="kpi-value accent-yellow"><span id="val-voltage">--</span> V</p>
+            </div>
+            <i class='bx bxs-battery-charging kpi-icon accent-yellow'></i>
+        </div>
+    </div>
+
+    <div class="chart-grid">
+        <div class="card">
+            <div class="chart-header">
+                <i class='bx bx-line-chart'></i>
+                <h2>PID Performance</h2>
+            </div>
+            <canvas id="pidChart"></canvas>
+        </div>
+
+        <div class="card">
+            <div class="chart-header">
+                <i class='bx bx-bolt-circle'></i>
+                <h2>Power Monitor (INA219)</h2>
+            </div>
+            <canvas id="powerChart"></canvas>
+        </div>
+    </div>
+
+    <script>
+        // --- ส่วน JavaScript (การทำงาน) ---
+
+        // 1. ตั้งค่า connection
+       const broker = 'ws://broker.hivemq.com:8884/mqtt';
+        // **สำคัญ** เปลี่ยน topic นี้ให้เป็นชื่อเฉพาะของคุณ ไม่งั้นข้อมูลจะชนกับคนอื่น
+        const topic = "chiangmai/ballnbeam/project_xx/data"; 
+
+        // เชื่อมต่อ MQTT
+        const client = mqtt.connect(broker);
+
+        // 2. เตรียม Chart.js
+        // ฟังก์ชันตั้งค่าสีและสไตล์กราฟให้ดู Neon
+        Chart.defaults.color = '#e0e6ed80'; // สีตัวหนังสือในกราฟ
+        Chart.defaults.borderColor = '#ffffff10'; // สีเส้น Grid จางๆ
+
+        const pidCtx = document.getElementById('pidChart').getContext('2d');
+        const powerCtx = document.getElementById('powerChart').getContext('2d');
+
+        const createChart = (ctx, label1, label2, color1, color2) => {
+            return new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [
+                        { 
+                            label: label1, data: [], borderColor: color1, backgroundColor: color1 + '20',
+                            borderWidth: 2, tension: 0.4, fill: true, pointRadius: 0 
+                        },
+                        { 
+                            label: label2, data: [], borderColor: color2, backgroundColor: color2 + '20',
+                            borderWidth: 2, tension: 0.4, fill: true, pointRadius: 0 
+                        }
+                    ]
+                },
+                options: { 
+                    animation: false, 
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: { 
+                        x: { display: false }, // ซ่อนแกน X เพื่อความสะอาดตา
+                        y: { beginAtZero: false, grid: { color: '#ffffff05'} } 
+                    },
+                    plugins: { legend: { labels: { usePointStyle: true } } }
+                }
+            });
+        }
+
+        const pidChart = createChart(pidCtx, 'Setpoint', 'Actual Position', '#00ff9d', '#ff3860');
+        const powerChart = createChart(powerCtx, 'Current (mA)', 'Voltage (V)', '#00f7ff', '#ffdd57');
+
+        // 3. Event Handlers ของ MQTT
+        client.on('connect', () => {
+            console.log("MQTT Connected!");
+            updateStatus(true);
+            client.subscribe(topic);
+        });
+
+        client.on('close', () => { updateStatus(false); });
+
+        // 4. เมื่อมีข้อมูลเข้ามา
+        client.on('message', (t, message) => {
+            try {
+                // แปลงข้อมูลจาก Text เป็น JSON Object
+                const data = JSON.parse(message.toString());
+                const now = new Date().toLocaleTimeString();
+
+                // อัปเดตตัวเลข KPI ด้านบน
+                document.getElementById('val-setpoint').innerText = data.setpoint.toFixed(1);
+                document.getElementById('val-actual').innerText = data.actual.toFixed(1);
+                document.getElementById('val-current').innerText = data.current_ma.toFixed(0);
+                document.getElementById('val-voltage').innerText = data.voltage.toFixed(2);
+
+                // อัปเดตกราฟ
+                updateChartData(pidChart, now, [data.setpoint, data.actual]);
+                updateChartData(powerChart, now, [data.current_ma, data.voltage]);
+
+            } catch (e) {
+                console.error("Error parsing JSON:", e);
+            }
+        });
+
+        // ฟังก์ชันช่วยอัปเดตสถานะและกราฟ
+        function updateStatus(isConnected) {
+            const icon = document.getElementById('status-icon');
+            const text = document.getElementById('status-text');
+            if (isConnected) {
+                icon.className = 'bx bxs-circle status-connected';
+                text.innerText = "สถานะ: เชื่อมต่อระบบสำเร็จ พร้อมรับข้อมูล ✅";
+            } else {
+                icon.className = 'bx bxs-circle status-disconnected';
+                text.innerText = "สถานะ: ขาดการเชื่อมต่อ กำลังพยายามใหม่... ❌";
+            }
+        }
+
+        function updateChartData(chart, label, dataPoints) {
+             // เก็บข้อมูลย้อนหลัง 50 จุด (เยอะขึ้นเพื่อให้กราฟดูต่อเนื่อง)
+            if (chart.data.labels.length > 50) {
+                chart.data.labels.shift();
+                chart.data.datasets.forEach(ds => ds.data.shift());
+            }
+            chart.data.labels.push(label);
+            dataPoints.forEach((val, i) => chart.data.datasets[i].data.push(val));
+            chart.update('none'); // update แบบไม่มี animation เพื่อความลื่นไหล
+        }
+    </script>
+</body>
+</html>
